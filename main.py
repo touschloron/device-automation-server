@@ -6,6 +6,25 @@ import uuid
 import json
 from datetime import datetime
 import jwt
+import base64
+import io
+import platform
+import subprocess
+import tempfile
+import os
+
+# Screenshot imports
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
+
+try:
+    from PIL import Image, ImageGrab
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 # Simple models
 class DeviceRegistration(BaseModel):
@@ -19,6 +38,12 @@ class AutomationCommand(BaseModel):
     action: str
     target: Optional[dict] = None
     parameters: Optional[dict] = None
+
+class ScreenshotResponse(BaseModel):
+    screenshot: str  # base64 encoded
+    timestamp: str
+    resolution: dict
+    success: bool
 
 # Initialize FastAPI
 app = FastAPI()
@@ -51,6 +76,60 @@ def verify_token(token: str) -> dict:
         return jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
     except:
         raise ValueError("Invalid token")
+
+# ========== SCREENSHOT FUNCTIONS ==========
+
+def capture_screenshot_pyautogui():
+    """Capture screenshot using pyautogui"""
+    if not PYAUTOGUI_AVAILABLE:
+        raise ImportError("pyautogui not available")
+    
+    screenshot = pyautogui.screenshot()
+    buffer = io.BytesIO()
+    screenshot.save(buffer, format='PNG')
+    buffer.seek(0)
+    
+    return {
+        'image_data': buffer.getvalue(),
+        'resolution': {'width': screenshot.width, 'height': screenshot.height}
+    }
+
+def capture_screenshot_pil():
+    """Capture screenshot using PIL ImageGrab"""
+    if not PIL_AVAILABLE:
+        raise ImportError("PIL not available")
+    
+    screenshot = ImageGrab.grab()
+    buffer = io.BytesIO()
+    screenshot.save(buffer, format='PNG')
+    buffer.seek(0)
+    
+    return {
+        'image_data': buffer.getvalue(),
+        'resolution': {'width': screenshot.width, 'height': screenshot.height}
+    }
+
+def capture_screenshot():
+    """Main screenshot function"""
+    os_name = platform.system().lower()
+    
+    # Try methods based on OS
+    if os_name == "darwin":  # macOS
+        methods = [capture_screenshot_pyautogui, capture_screenshot_pil]
+    elif os_name == "windows":
+        methods = [capture_screenshot_pyautogui, capture_screenshot_pil]
+    else:  # Linux and others
+        methods = [capture_screenshot_pyautogui, capture_screenshot_pil]
+    
+    last_error = None
+    for method in methods:
+        try:
+            return method()
+        except Exception as e:
+            last_error = e
+            continue
+    
+    raise RuntimeError(f"All screenshot methods failed. Last error: {last_error}")
 
 @app.get("/")
 async def root():
