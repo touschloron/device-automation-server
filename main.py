@@ -13,18 +13,24 @@ import subprocess
 import tempfile
 import os
 
-# Screenshot imports
-try:
-    import pyautogui
-    PYAUTOGUI_AVAILABLE = True
-except ImportError:
-    PYAUTOGUI_AVAILABLE = False
+# Screenshot imports - only import if DISPLAY is available
+import os
+PYAUTOGUI_AVAILABLE = False
+PIL_AVAILABLE = False
 
-try:
-    from PIL import Image, ImageGrab
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
+# Only try to import GUI libraries if we have a display
+if os.environ.get('DISPLAY') or os.name == 'nt':  # Windows or Linux with display
+    try:
+        import pyautogui
+        PYAUTOGUI_AVAILABLE = True
+    except (ImportError, Exception):
+        PYAUTOGUI_AVAILABLE = False
+
+    try:
+        from PIL import Image, ImageGrab
+        PIL_AVAILABLE = True
+    except (ImportError, Exception):
+        PIL_AVAILABLE = False
 
 # Simple models
 class DeviceRegistration(BaseModel):
@@ -174,29 +180,12 @@ async def register_device(device: DeviceRegistration):
 @app.post("/api/devices/screenshot")
 async def take_screenshot():
     """Capture and return screenshot as base64"""
-    try:
-        print("📸 Taking screenshot...")
-        result = capture_screenshot()
-        
-        # Encode to base64
-        screenshot_b64 = base64.b64encode(result['image_data']).decode('utf-8')
-        
-        print(f"✅ Screenshot captured: {result['resolution']['width']}x{result['resolution']['height']}")
-        
-        return ScreenshotResponse(
-            screenshot=screenshot_b64,
-            timestamp=datetime.now().isoformat(),
-            resolution=result['resolution'],
-            success=True
-        )
-        
-    except Exception as e:
-        print(f"❌ Screenshot failed: {str(e)}")
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Screenshot capture failed: {str(e)}"
-        )
+    # For Railway deployment, we can't take screenshots directly
+    # This endpoint exists for API compatibility
+    raise HTTPException(
+        status_code=501, 
+        detail="Screenshot capability not available on headless server. Use connected device client instead."
+    )
 
 @app.get("/api/devices")
 async def list_devices():
