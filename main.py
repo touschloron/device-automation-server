@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional, List
+import asyncio
 import uuid
 import json
 from datetime import datetime
@@ -51,6 +52,18 @@ class ScreenshotResponse(BaseModel):
     resolution: dict
     success: bool
 
+class ScreenshotRequest(BaseModel):
+    device_id: str
+    description: Optional[str] = None
+
+class ScreenshotTaskResponse(BaseModel):
+    request_id: str
+    status: str  # "pending", "completed", "failed"
+    screenshot: Optional[str] = None
+    timestamp: Optional[str] = None
+    resolution: Optional[dict] = None
+    error: Optional[str] = None
+
 # Initialize FastAPI
 app = FastAPI()
 
@@ -67,6 +80,7 @@ app.add_middleware(
 connected_devices: Dict[str, WebSocket] = {}
 device_registry: Dict[str, dict] = {}
 SECRET_KEY = "your-secret-key-123"
+screenshot_tasks: Dict[str, dict] = {}  # request_id -> task data
 
 def create_token(device_id: str) -> str:
     """Create a simple JWT token"""
@@ -177,14 +191,85 @@ async def register_device(device: DeviceRegistration):
         "status": "registered"
     }
 
+@app.post("/api/devices/screenshot/request")
+async def request_screenshot(request: ScreenshotRequest):
+    """Start a screenshot task and return request_id"""
+    import uuid
+    
+    # Check if device exists and is connected
+    if request.device_id not in device_registry:
+        raise HTTPException(status_code=404, detail="Device not found")
+    
+    if request.device_id not in connected_devices:
+        raise HTTPException(status_code=503, detail="Device not connected")
+    
+    # Create unique request ID
+    request_id = str(uuid.uuid4())
+    
+    # Store the task
+    screenshot_tasks[request_id] = {
+        "status": "pending",
+        "device_id": request.device_id,
+        "description": request.description,
+        "created_at": datetime.now().isoformat(),
+        "screenshot": None,
+        "error": None
+    }
+    
+    # Send command to device
+    try:
+        websocket = connected_devices[request.device_id]
+        command_data = {
+            "command_id": request_id,
+            "action": "screenshot",
+            "target": {},
+            "parameters": {"description": request.description or ""},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        await websocket.send_text(json.dumps(command_data))
+        print(f"📸 Screenshot request {request_id} sent to device {request.device_id}")
+        
+        return {"request_id": request_id, "status": "pending"}
+        
+    except Exception as e:
+        # Mark task as failed
+        screenshot_tasks[request_id]["status"] = "failed"
+        screenshot_tasks[request_id]["error"] = str(e)
+        print(f"❌ Failed to send screenshot request: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send command: {str(e)}")
+
+@app.get("/api/devices/screenshot/status/{request_id}")
+async def get_screenshot_status(request_id: str):
+    """Poll for screenshot task status and result"""
+    if request_id not in screenshot_tasks:
+        raise HTTPException(status_code=404, detail="Screenshot request not found")
+    
+    task = screenshot_tasks[request_id]
+    
+    response = ScreenshotTaskResponse(
+        request_id=request_id,
+        status=task["status"],
+        screenshot=task.get("screenshot"),
+        timestamp=task.get("completed_at"),
+        resolution=task.get("resolution"),
+        error=task.get("error")
+    )
+    
+    # Clean up completed tasks after 5 minutes
+    if task["status"] in ["completed", "failed"]:
+        created_time = datetime.fromisoformat(task["created_at"])
+        if (datetime.now() - created_time).total_seconds() > 300:  # 5 minutes
+            del screenshot_tasks[request_id]
+    
+    return response
+
 @app.post("/api/devices/screenshot")
 async def take_screenshot():
-    """Capture and return screenshot as base64"""
-    # For Railway deployment, we can't take screenshots directly
-    # This endpoint exists for API compatibility
+    """Legacy endpoint - now returns error directing to new endpoints"""
     raise HTTPException(
         status_code=501, 
-        detail="Screenshot capability not available on headless server. Use connected device client instead."
+        detail="This endpoint is deprecated. Use POST /api/devices/screenshot/request and GET /api/devices/screenshot/status/{request_id} instead."
     )
 
 @app.get("/api/devices")
