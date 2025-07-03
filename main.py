@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional, List
@@ -349,13 +349,30 @@ async def device_websocket(websocket: WebSocket, device_id: str):
         
         # Listen for responses
         try:
-            while True:
-                message = await websocket.receive_text()
-                response = json.loads(message)
-                print(f"📨 Response from {device_id}: {response.get('status', 'unknown')}")
-                
-        except WebSocketDisconnect:
-            print(f"🔌 Device {device_id} disconnected")
+             while True:
+             message = await websocket.receive_text()
+             response_data = json.loads(message)
+             print(f"📨 Response from {device_id}: {response_data.get('status', 'unknown')}")
+        
+        # Handle screenshot responses
+            command_id = response_data.get("command_id")
+                 if command_id and command_id in screenshot_tasks:
+                 task = screenshot_tasks[command_id]
+            
+                     if response_data.get("status") == "success":
+                         result = response_data.get("result", {})
+                         task["status"] = "completed"
+                         task["screenshot"] = result.get("screenshot")
+                         task["resolution"] = result.get("resolution")
+                         task["completed_at"] = datetime.now().isoformat()
+                         print(f"✅ Screenshot {command_id} completed")
+                    else:
+                        task["status"] = "failed" 
+                        task["error"] = response_data.get("error_message", "Unknown error")
+                        print(f"❌ Screenshot {command_id} failed")
+        
+         except WebSocketDisconnect:
+              print(f"🔌 Device {device_id} disconnected")
         
     except Exception as e:
         print(f"❌ WebSocket error: {e}")
