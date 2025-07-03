@@ -171,6 +171,33 @@ async def register_device(device: DeviceRegistration):
         "status": "registered"
     }
 
+@app.post("/api/devices/screenshot")
+async def take_screenshot():
+    """Capture and return screenshot as base64"""
+    try:
+        print("📸 Taking screenshot...")
+        result = capture_screenshot()
+        
+        # Encode to base64
+        screenshot_b64 = base64.b64encode(result['image_data']).decode('utf-8')
+        
+        print(f"✅ Screenshot captured: {result['resolution']['width']}x{result['resolution']['height']}")
+        
+        return ScreenshotResponse(
+            screenshot=screenshot_b64,
+            timestamp=datetime.now().isoformat(),
+            resolution=result['resolution'],
+            success=True
+        )
+        
+    except Exception as e:
+        print(f"❌ Screenshot failed: {str(e)}")
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Screenshot capture failed: {str(e)}"
+        )
+
 @app.get("/api/devices")
 async def list_devices():
     """List all devices"""
