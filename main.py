@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional, List
@@ -6,25 +6,6 @@ import uuid
 import json
 from datetime import datetime
 import jwt
-import base64
-import io
-import platform
-import subprocess
-import tempfile
-import os
-
-# Screenshot imports (install these: pip install pillow pyautogui)
-try:
-    import pyautogui
-    PYAUTOGUI_AVAILABLE = True
-except ImportError:
-    PYAUTOGUI_AVAILABLE = False
-
-try:
-    from PIL import Image, ImageGrab
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
 
 # Simple models
 class DeviceRegistration(BaseModel):
@@ -38,12 +19,6 @@ class AutomationCommand(BaseModel):
     action: str
     target: Optional[dict] = None
     parameters: Optional[dict] = None
-
-class ScreenshotResponse(BaseModel):
-    screenshot: str  # base64 encoded
-    timestamp: str
-    resolution: dict
-    success: bool
 
 # Initialize FastAPI
 app = FastAPI()
@@ -77,87 +52,6 @@ def verify_token(token: str) -> dict:
     except:
         raise ValueError("Invalid token")
 
-# NEW: Screenshot functions
-def capture_screenshot_pyautogui():
-    """Capture screenshot using pyautogui"""
-    if not PYAUTOGUI_AVAILABLE:
-        raise ImportError("pyautogui not available")
-    
-    screenshot = pyautogui.screenshot()
-    buffer = io.BytesIO()
-    screenshot.save(buffer, format='PNG')
-    buffer.seek(0)
-    
-    return {
-        'image_data': buffer.getvalue(),
-        'resolution': {'width': screenshot.width, 'height': screenshot.height}
-    }
-
-def capture_screenshot_pil():
-    """Capture screenshot using PIL ImageGrab"""
-    if not PIL_AVAILABLE:
-        raise ImportError("PIL not available")
-    
-    screenshot = ImageGrab.grab()
-    buffer = io.BytesIO()
-    screenshot.save(buffer, format='PNG')
-    buffer.seek(0)
-    
-    return {
-        'image_data': buffer.getvalue(),
-        'resolution': {'width': screenshot.width, 'height': screenshot.height}
-    }
-
-def capture_screenshot_macos():
-    """Capture screenshot using macOS screencapture command"""
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-        try:
-            subprocess.run(['screencapture', '-x', tmp_file.name], check=True)
-            
-            with open(tmp_file.name, 'rb') as f:
-                image_data = f.read()
-            
-            # Get resolution
-            result = subprocess.run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', tmp_file.name], 
-                                  capture_output=True, text=True)
-            
-            width = height = 1920  # Default values
-            for line in result.stdout.split('\n'):
-                if 'pixelWidth:' in line:
-                    width = int(line.split(':')[1].strip())
-                elif 'pixelHeight:' in line:
-                    height = int(line.split(':')[1].strip())
-            
-            return {
-                'image_data': image_data,
-                'resolution': {'width': width, 'height': height}
-            }
-        finally:
-            if os.path.exists(tmp_file.name):
-                os.unlink(tmp_file.name)
-
-def capture_screenshot():
-    """Main screenshot function"""
-    os_name = platform.system().lower()
-    
-    # Try methods based on OS
-    if os_name == "darwin":  # macOS
-        methods = [capture_screenshot_macos, capture_screenshot_pyautogui, capture_screenshot_pil]
-    elif os_name == "windows":
-        methods = [capture_screenshot_pyautogui, capture_screenshot_pil]
-    else:  # Linux and others
-        methods = [capture_screenshot_pyautogui, capture_screenshot_pil]
-    
-    last_error = None
-    for method in methods:
-        try:
-            return method()
-        except Exception as e:
-            last_error = e
-            continue
-    
-    raise RuntimeError(f"All screenshot methods failed. Last error: {last_error}")
-
 @app.get("/")
 async def root():
     return {"message": "Device Automation Server is running"}
@@ -175,10 +69,6 @@ async def health():
 async def register_device(device: DeviceRegistration):
     """Register a new device"""
     device_id = str(uuid.uuid4())
-    
-    # Add screenshot to capabilities if not present
-    if "screenshot" not in device.capabilities:
-        device.capabilities.append("screenshot")
     
     # Store device
     device_registry[device_id] = {
@@ -202,33 +92,6 @@ async def register_device(device: DeviceRegistration):
         "status": "registered"
     }
 
-# NEW: Screenshot endpoint
-@app.post("/api/devices/screenshot")
-async def take_screenshot():
-    """Capture and return screenshot as base64"""
-    try:
-        print("📸 Taking screenshot...")
-        result = capture_screenshot()
-        
-        # Encode to base64
-        screenshot_b64 = base64.b64encode(result['image_data']).decode('utf-8')
-        
-        print(f"✅ Screenshot captured: {result['resolution']['width']}x{result['resolution']['height']}")
-        
-        return ScreenshotResponse(
-            screenshot=screenshot_b64,
-            timestamp=datetime.now().isoformat(),
-            resolution=result['resolution'],
-            success=True
-        )
-        
-    except Exception as e:
-        print(f"❌ Screenshot failed: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Screenshot capture failed: {str(e)}"
-        )
-
 @app.get("/api/devices")
 async def list_devices():
     """List all devices"""
@@ -236,27 +99,6 @@ async def list_devices():
         "devices": list(device_registry.values()),
         "total": len(device_registry)
     }
-
-# NEW: Test screenshot endpoint
-@app.get("/api/devices/test-screenshot")
-async def test_screenshot():
-    """Test if screenshot works and return info"""
-    try:
-        result = capture_screenshot()
-        return {
-            "screenshot_available": True,
-            "resolution": result['resolution'],
-            "os": platform.system(),
-            "image_size_bytes": len(result['image_data'])
-        }
-    except Exception as e:
-        return {
-            "screenshot_available": False,
-            "error": str(e),
-            "os": platform.system(),
-            "pyautogui_available": PYAUTOGUI_AVAILABLE,
-            "pil_available": PIL_AVAILABLE
-        }
 
 @app.post("/api/devices/{device_id}/execute")
 async def execute_command(device_id: str, command: AutomationCommand):
@@ -348,7 +190,4 @@ if __name__ == "__main__":
     import uvicorn
     import os
     port = int(os.environ.get("PORT", 8000))
-    print(f"🚀 Starting server on port {port}")
-    print(f"💻 Operating System: {platform.system()}")
-    print("📸 Screenshot capability will be tested on first request")
     uvicorn.run(app, host="0.0.0.0", port=port)
